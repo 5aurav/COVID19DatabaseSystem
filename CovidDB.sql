@@ -1,0 +1,1299 @@
+/*
+============================================================
+COVID DATABASE PROJECT
+PostgreSQL SQL FILE
+============================================================
+
+ORDER:
+1. TABLE CREATION
+2. INDEXES
+3. ALL 40 USE CASE QUERIES
+
+IMPORTANT:
+- Queries for Use Cases 1-40 are kept consistent with the
+  queries shown in the provided screenshots.
+- Q40 requires the Mumbai CSV data to be imported into
+  mumbai_covid_waves after creating the table.
+============================================================
+*/
+
+
+/*
+============================================================
+1. TABLE CREATION
+============================================================
+*/
+
+CREATE TABLE IF NOT EXISTS country (
+    country_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    continent VARCHAR(50),
+    population BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS state (
+    state_id INT PRIMARY KEY,
+    country_id INT REFERENCES country(country_id),
+    name VARCHAR(100),
+    population BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS district (
+    district_id INT PRIMARY KEY,
+    state_id INT REFERENCES state(state_id),
+    name VARCHAR(100)
+);
+
+CREATE TABLE IF NOT EXISTS global_covid_stats (
+    global_stat_id INT PRIMARY KEY,
+    country_id INT REFERENCES country(country_id),
+    report_date DATE,
+    confirmed BIGINT,
+    deaths BIGINT,
+    recovered BIGINT,
+    new_confirmed BIGINT,
+    new_deaths BIGINT,
+    active_cases BIGINT,
+    people_vaccinated_1dose BIGINT,
+    people_fully_vaccinated BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS covid_case_stats (
+    case_id INT PRIMARY KEY,
+    country_id INT REFERENCES country(country_id),
+    state_id INT REFERENCES state(state_id),
+    district_id INT REFERENCES district(district_id),
+    report_date DATE,
+    report_time TIME,
+    confirmed BIGINT,
+    deaths BIGINT,
+    recovered BIGINT,
+    new_confirmed BIGINT,
+    new_deaths BIGINT,
+    active_cases BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS vaccination (
+    vaccine_id INT PRIMARY KEY,
+    state_id INT REFERENCES state(state_id),
+    date DATE,
+    total_doses BIGINT,
+    first_dose BIGINT,
+    second_dose BIGINT,
+    covaxin BIGINT,
+    covishield BIGINT,
+    sputnik_v BIGINT,
+    precaution_dose BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS testing (
+    testing_id INT PRIMARY KEY,
+    state_id INT REFERENCES state(state_id),
+    date DATE,
+    total_samples BIGINT,
+    positive_cases BIGINT,
+    negative_cases BIGINT
+);
+
+
+/*
+------------------------------------------------------------
+TABLE FOR USE CASE 40 - MUMBAI COVID WAVES
+The Mumbai CSV contains 12 columns:
+case_id, country_id, state_id, district_id,
+report_date, report_time, confirmed, deaths,
+recovered, new_confirmed, new_deaths, active_cases
+------------------------------------------------------------
+*/
+
+CREATE TABLE IF NOT EXISTS mumbai_covid_waves (
+    case_id INT,
+    country_id INT,
+    state_id INT,
+    district_id INT,
+    report_date DATE,
+    report_time TIME,
+    confirmed INT,
+    deaths INT,
+    recovered INT,
+    new_confirmed INT,
+    new_deaths INT,
+    active_cases INT
+);
+
+
+/*
+============================================================
+2. INDEXES
+============================================================
+*/
+
+
+/*
+14. Explain the importance of indexes in optimizing
+    queries for this dataset.
+
+The following EXPLAIN ANALYZE query is the same approach
+shown in the screenshot.
+*/
+
+EXPLAIN ANALYZE
+SELECT *
+FROM global_covid_stats
+WHERE country_id = 1;
+
+
+/*
+15. Implement an index on the "Country/Region" column
+    to speed up search operations.
+
+The project schema uses country.name instead of
+"Country/Region", so the same screenshot query is used.
+*/
+
+CREATE INDEX IF NOT EXISTS idx_country_name
+ON country(name);
+
+SELECT
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE tablename = 'country';
+
+EXPLAIN ANALYZE
+SELECT *
+FROM country
+WHERE name = 'India';
+
+
+/*
+Additional indexes used by the dataset for faster joins
+and date-based searches.
+*/
+
+CREATE INDEX IF NOT EXISTS idx_global_covid_country_id
+ON global_covid_stats(country_id);
+
+CREATE INDEX IF NOT EXISTS idx_global_covid_report_date
+ON global_covid_stats(report_date);
+
+CREATE INDEX IF NOT EXISTS idx_covid_case_country_id
+ON covid_case_stats(country_id);
+
+CREATE INDEX IF NOT EXISTS idx_covid_case_state_id
+ON covid_case_stats(state_id);
+
+CREATE INDEX IF NOT EXISTS idx_covid_case_report_date
+ON covid_case_stats(report_date);
+
+
+/*
+============================================================
+3. ALL 40 USE CASE QUERIES
+============================================================
+*/
+
+
+/*
+============================================================
+JOINS
+============================================================
+*/
+
+
+/*
+1. Which country has the highest number of confirmed cases
+   on a specific date?
+*/
+
+SELECT
+    c.name AS country,
+    g.report_date,
+    g.confirmed
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+WHERE g.report_date = '2020-09-30'
+ORDER BY g.confirmed DESC
+LIMIT 1;
+
+
+/*
+2. Show the total number of deaths in each country,
+   including provinces/states, for a given date.
+*/
+
+SELECT
+    c.name AS country,
+    s.name AS state,
+    cs.report_date,
+    SUM(cs.deaths) AS total_deaths
+FROM covid_case_stats cs
+JOIN country c
+    ON cs.country_id = c.country_id
+JOIN state s
+    ON cs.state_id = s.state_id
+WHERE cs.report_date = '2020-09-30'
+GROUP BY
+    c.name,
+    s.name,
+    cs.report_date
+ORDER BY total_deaths DESC;
+
+
+/*
+3. List the continents along with the total number of
+   confirmed cases, deaths, and recoveries.
+*/
+
+SELECT
+    c.continent,
+    SUM(g.confirmed) AS total_confirmed_cases,
+    SUM(g.deaths) AS total_deaths,
+    SUM(g.recovered) AS total_recoveries
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.continent
+ORDER BY total_confirmed_cases DESC;
+
+
+/*
+============================================================
+AGGREGATE FUNCTIONS
+============================================================
+*/
+
+
+/*
+4. Calculate the average number of new deaths per day
+   across all countries.
+*/
+
+SELECT
+    report_date,
+    AVG(new_deaths) AS average_new_deaths
+FROM global_covid_stats
+GROUP BY report_date
+ORDER BY report_date;
+
+
+/*
+5. Find the maximum number of active cases recorded in
+   any country on a specific date.
+*/
+
+SELECT
+    c.name AS country,
+    g.report_date,
+    g.active_cases
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+WHERE g.report_date = '2020-06-30'
+ORDER BY g.active_cases DESC
+LIMIT 1;
+
+
+/*
+============================================================
+STORED PROCEDURE / FUNCTION
+============================================================
+*/
+
+
+/*
+6. Create a stored procedure that returns the total number
+   of recovered cases for a given country and date.
+
+The screenshot uses a PostgreSQL FUNCTION, so it is kept
+as a FUNCTION for consistency.
+*/
+
+CREATE OR REPLACE FUNCTION get_recovered_cases(
+    p_country_name VARCHAR,
+    p_date DATE
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    total_recovered BIGINT;
+BEGIN
+    SELECT COALESCE(SUM(g.recovered), 0)
+    INTO total_recovered
+    FROM global_covid_stats g
+    JOIN country c
+        ON g.country_id = c.country_id
+    WHERE c.name = p_country_name
+      AND g.report_date = p_date;
+
+    RETURN total_recovered;
+END;
+$$;
+
+SELECT get_recovered_cases('India', '2020-09-30');
+
+
+/*
+7. Design a stored procedure to update the number of deaths
+   for a specific country and date.
+*/
+
+CREATE OR REPLACE PROCEDURE update_deaths(
+    p_country_name VARCHAR,
+    p_date DATE,
+    p_new_deaths BIGINT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE global_covid_stats
+    SET deaths = p_new_deaths
+    FROM country c
+    WHERE global_covid_stats.country_id = c.country_id
+      AND c.name = p_country_name
+      AND global_covid_stats.report_date = p_date;
+END;
+$$;
+
+/*
+Example CALL from the screenshot:
+
+CALL update_deaths(
+    'India',
+    '2020-09-30',
+    500000
+);
+
+The CALL is intentionally commented because it changes data.
+*/
+
+
+/*
+============================================================
+VIEWS
+============================================================
+*/
+
+
+/*
+8. Create a view that displays the total number of cases
+   (confirmed, deaths, and recovered) for each country
+   on a specific date.
+*/
+
+CREATE OR REPLACE VIEW country_covid_summary AS
+SELECT
+    c.name AS country,
+    g.report_date,
+    SUM(g.confirmed) AS confirmed,
+    SUM(g.deaths) AS deaths,
+    SUM(g.recovered) AS recovered
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY
+    c.name,
+    g.report_date;
+
+SELECT *
+FROM country_covid_summary
+WHERE report_date = '2020-09-30'
+ORDER BY confirmed DESC;
+
+
+/*
+9. Implement a view to show the latest data
+   (confirmed, deaths, recovered) for each country.
+*/
+
+CREATE OR REPLACE VIEW latest_country_covid_data AS
+SELECT
+    c.name AS country,
+    g.report_date,
+    g.confirmed,
+    g.deaths,
+    g.recovered
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+WHERE g.report_date = (
+    SELECT MAX(report_date)
+    FROM global_covid_stats
+);
+
+SELECT *
+FROM latest_country_covid_data
+ORDER BY confirmed DESC;
+
+
+/*
+============================================================
+T-SQL
+============================================================
+*/
+
+
+/*
+10. Write a T-SQL query to calculate the total number of
+    cases (confirmed + deaths + recovered) for each country.
+*/
+
+SELECT
+    c.name AS country,
+    SUM(
+        g.confirmed
+        + g.deaths
+        + g.recovered
+    ) AS total_cases
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY total_cases DESC;
+
+
+/*
+11. Use T-SQL to identify the country with the highest
+    number of new cases reported on a specific date.
+*/
+
+SELECT
+    c.name AS country,
+    g.report_date,
+    g.new_confirmed
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+WHERE g.report_date = '2020-09-30'
+ORDER BY g.new_confirmed DESC
+LIMIT 1;
+
+
+/*
+============================================================
+CTE (COMMON TABLE EXPRESSIONS)
+============================================================
+*/
+
+
+/*
+12. Create a CTE to calculate the percentage increase in
+    confirmed cases for each country over the past week.
+*/
+
+WITH weekly_cases AS (
+    SELECT
+        c.name AS country,
+        g.report_date,
+        g.confirmed,
+        LAG(g.confirmed, 7) OVER (
+            PARTITION BY g.country_id
+            ORDER BY g.report_date
+        ) AS previous_week_confirmed
+    FROM global_covid_stats g
+    JOIN country c
+        ON g.country_id = c.country_id
+)
+SELECT
+    country,
+    report_date,
+    confirmed,
+    previous_week_confirmed,
+    ROUND(
+        (
+            (confirmed - previous_week_confirmed) * 100.0
+            / NULLIF(previous_week_confirmed, 0)
+        )::NUMERIC,
+        2
+    ) AS percentage_increase
+FROM weekly_cases
+WHERE previous_week_confirmed IS NOT NULL
+ORDER BY percentage_increase DESC;
+
+
+/*
+13. Use a CTE to find the country with the highest number
+    of active cases at the moment.
+*/
+
+WITH latest_data AS (
+    SELECT
+        g.country_id,
+        g.active_cases,
+        g.report_date
+    FROM global_covid_stats g
+    WHERE g.report_date = (
+        SELECT MAX(report_date)
+        FROM global_covid_stats
+    )
+)
+SELECT
+    c.name AS country,
+    l.report_date,
+    l.active_cases
+FROM latest_data l
+JOIN country c
+    ON l.country_id = c.country_id
+ORDER BY l.active_cases DESC
+LIMIT 1;
+
+
+/*
+============================================================
+INDEXES
+============================================================
+*/
+
+
+/*
+14. Explain the importance of indexes in optimizing
+    queries for this dataset.
+
+Indexes reduce the amount of data PostgreSQL needs to scan
+when searching, filtering, joining, or sorting large tables.
+They are especially useful for country_id, state_id,
+report_date, and country name in this COVID dataset.
+
+Query used in the screenshot:
+*/
+
+EXPLAIN ANALYZE
+SELECT *
+FROM global_covid_stats
+WHERE country_id = 1;
+
+
+/*
+15. Implement an index on the "Country/Region" column
+    to speed up search operations.
+
+The schema uses country.name, so the project query is:
+*/
+
+CREATE INDEX IF NOT EXISTS idx_country_name
+ON country(name);
+
+SELECT
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE tablename = 'country';
+
+EXPLAIN ANALYZE
+SELECT *
+FROM country
+WHERE name = 'India';
+
+
+/*
+============================================================
+USER-DEFINED FUNCTIONS (UDF)
+============================================================
+*/
+
+
+/*
+16. Develop a UDF to calculate the mortality rate
+    (deaths / confirmed cases * 100) for a given country.
+*/
+
+CREATE OR REPLACE FUNCTION calculate_mortality_rate(
+    p_country_name VARCHAR
+)
+RETURNS NUMERIC
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    mortality_rate NUMERIC;
+BEGIN
+    SELECT
+        (
+            SUM(g.deaths) * 100.0
+            / NULLIF(SUM(g.confirmed), 0)
+        )
+    INTO mortality_rate
+    FROM global_covid_stats g
+    JOIN country c
+        ON g.country_id = c.country_id
+    WHERE c.name = p_country_name;
+
+    RETURN ROUND(mortality_rate, 2);
+END;
+$$;
+
+SELECT calculate_mortality_rate('India');
+
+
+/*
+17. Create a UDF to determine the recovery rate
+    (recovered / confirmed cases * 100) for a specific date.
+*/
+
+CREATE OR REPLACE FUNCTION calculate_recovery_rate(
+    p_country_name VARCHAR,
+    p_date DATE
+)
+RETURNS NUMERIC
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    recovery_rate NUMERIC;
+BEGIN
+    SELECT
+        (
+            SUM(g.recovered) * 100.0
+            / NULLIF(SUM(g.confirmed), 0)
+        )
+    INTO recovery_rate
+    FROM global_covid_stats g
+    JOIN country c
+        ON g.country_id = c.country_id
+    WHERE c.name = p_country_name
+      AND g.report_date = p_date;
+
+    RETURN ROUND(recovery_rate, 2);
+END;
+$$;
+
+SELECT calculate_recovery_rate(
+    'India',
+    '2020-09-30'
+);
+
+
+/*
+============================================================
+GROUP BY
+============================================================
+*/
+
+
+/*
+18. Group the data by continent and calculate the total
+    number of confirmed cases for each continent.
+*/
+
+SELECT
+    c.continent,
+    SUM(g.confirmed) AS total_confirmed_cases
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.continent
+ORDER BY total_confirmed_cases DESC;
+
+
+/*
+19. Group the data by date and compute the total number
+    of deaths and recoveries for each date.
+*/
+
+SELECT
+    g.report_date,
+    SUM(g.deaths) AS total_deaths,
+    SUM(g.recovered) AS total_recoveries
+FROM global_covid_stats g
+GROUP BY g.report_date
+ORDER BY g.report_date;
+
+
+/*
+20. Group the data by country and calculate the average
+    number of new cases reported daily for each country.
+*/
+
+SELECT
+    c.name AS country,
+    AVG(g.new_confirmed) AS average_daily_new_cases
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY average_daily_new_cases DESC;
+
+
+/*
+============================================================
+COVID-DATA-GLOBAL
+============================================================
+*/
+
+
+/*
+21. To find out the death percentage locally and globally.
+
+Global
+*/
+
+SELECT
+    ROUND(
+        (
+            SUM(deaths) * 100.0
+            / NULLIF(SUM(confirmed), 0)
+        )::NUMERIC,
+        2
+    ) AS global_death_percentage
+FROM global_covid_stats;
+
+
+/*
+21. Country-wise
+*/
+
+SELECT
+    c.name AS country,
+    ROUND(
+        (
+            MAX(g.deaths) * 100.0
+            / NULLIF(MAX(g.confirmed), 0)
+        )::NUMERIC,
+        2
+    ) AS death_percentage
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY death_percentage DESC;
+
+
+/*
+22. To find out the infected population percentage locally
+    and globally.
+
+Global
+*/
+
+SELECT
+    ROUND(
+        (
+            SUM(g.confirmed) * 100.0
+            / NULLIF(SUM(c.population), 0)
+        )::NUMERIC,
+        2
+    ) AS global_infected_population_percentage
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id;
+
+
+/*
+22. Country-wise
+*/
+
+SELECT
+    c.name AS country,
+    ROUND(
+        (
+            MAX(g.confirmed) * 100.0
+            / NULLIF(MAX(c.population), 0)
+        )::NUMERIC,
+        2
+    ) AS death_percentage
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY death_percentage DESC;
+
+
+/*
+23. To find out the countries with the highest infection rates
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    MAX(g.confirmed) AS confirmed_cases,
+    ROUND(
+        (
+            MAX(g.confirmed) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS infected_population_percentage
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY
+    c.name,
+    c.population
+ORDER BY infected_population_percentage DESC;
+
+
+/*
+24. To find out the countries and continents with the
+    highest death counts.
+
+The screenshot for this use case contains the same query
+shown for Use Case 23. It is kept unchanged for consistency
+with the submitted screenshots.
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    MAX(g.confirmed) AS confirmed_cases,
+    ROUND(
+        (
+            MAX(g.confirmed) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS infection_rate
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY
+    c.name,
+    c.population
+ORDER BY infection_rate DESC;
+
+
+/*
+25. Average number of deaths by day
+    (Continents and Countries)
+    [Hint: order by, group by clause]
+
+By Country
+*/
+
+SELECT
+    c.name AS country,
+    AVG(g.new_deaths) AS average_daily_deaths
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY average_daily_deaths DESC;
+
+
+/*
+25. By Continent
+*/
+
+SELECT
+    c.continent,
+    AVG(g.new_deaths) AS average_daily_deaths
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.continent
+ORDER BY average_daily_deaths DESC;
+
+
+/*
+26. Average of cases divided by the number of population
+    of each country (TOP 10)
+    [Hint: Limit]
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    AVG(g.confirmed) AS average_cases,
+    ROUND(
+        (
+            AVG(g.confirmed) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS cases_population_percentage
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY
+    c.name,
+    c.population
+ORDER BY cases_population_percentage DESC
+LIMIT 10;
+
+
+/*
+27. Considering the highest value of total cases, which
+    countries have the highest rate of infection in relation
+    to population?
+    [Hint: Where clause]
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    MAX(g.confirmed) AS total_cases,
+    ROUND(
+        (
+            MAX(g.confirmed) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS infection_rate
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY
+    c.name,
+    c.population
+HAVING MAX(g.confirmed) > 0
+ORDER BY infection_rate DESC;
+
+
+/*
+28. Countries with the highest number of deaths
+*/
+
+SELECT
+    c.name AS country,
+    MAX(g.deaths) AS total_deaths
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.name
+ORDER BY total_deaths DESC;
+
+
+/*
+29. Continents with the highest number of deaths
+*/
+
+SELECT
+    c.continent,
+    SUM(g.deaths) AS total_deaths
+FROM global_covid_stats g
+JOIN country c
+    ON g.country_id = c.country_id
+GROUP BY c.continent
+ORDER BY total_deaths DESC;
+
+
+/*
+============================================================
+QUERIES ON VACCINATION
+============================================================
+*/
+
+
+/*
+30. Total vaccinated with at least 1 dose over time
+    (All countries)
+*/
+
+SELECT
+    v.date,
+    SUM(v.first_dose) AS total_people_vaccinated
+FROM vaccination v
+GROUP BY v.date
+ORDER BY v.date;
+
+
+/*
+31. Percentage of the population vaccinated with at least
+    the first dose until 30/9/2021 (Top 3)
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    SUM(v.first_dose) AS people_vaccinated_first_dose,
+    ROUND(
+        (
+            SUM(v.first_dose) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS vaccination_percentage
+FROM vaccination v
+JOIN state s
+    ON v.state_id = s.state_id
+JOIN country c
+    ON s.country_id = c.country_id
+WHERE v.date <= '2021-09-30'
+GROUP BY
+    c.name,
+    c.population
+ORDER BY vaccination_percentage DESC
+LIMIT 3;
+
+
+/*
+============================================================
+USING JOINS TO COMBINE THE COVID-DEATHS AND COVID-VACCINE
+TABLES
+============================================================
+*/
+
+
+/*
+32. To find out the population vs the number of people
+    vaccinated
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    SUM(v.first_dose) AS people_vaccinated_first_dose,
+    SUM(v.second_dose) AS people_fully_vaccinated
+FROM country c
+JOIN state s
+    ON c.country_id = s.country_id
+JOIN vaccination v
+    ON s.state_id = v.state_id
+GROUP BY
+    c.name,
+    c.population
+ORDER BY people_vaccinated_first_dose DESC;
+
+
+/*
+33. To find out the percentage of different vaccine taken
+    by people in a country
+*/
+
+SELECT
+    c.name AS country,
+    SUM(v.covaxin) AS covaxin,
+    SUM(v.covishield) AS covishield,
+    SUM(v.sputnik_v) AS sputnik_v,
+    ROUND(
+        (
+            SUM(v.covaxin) * 100.0
+            / NULLIF(
+                SUM(v.covaxin)
+                + SUM(v.covishield)
+                + SUM(v.sputnik_v),
+                0
+            )
+        )::NUMERIC,
+        2
+    ) AS covaxin_percentage,
+    ROUND(
+        (
+            SUM(v.covishield) * 100.0
+            / NULLIF(
+                SUM(v.covaxin)
+                + SUM(v.covishield)
+                + SUM(v.sputnik_v),
+                0
+            )
+        )::NUMERIC,
+        2
+    ) AS covishield_percentage,
+    ROUND(
+        (
+            SUM(v.sputnik_v) * 100.0
+            / NULLIF(
+                SUM(v.covaxin)
+                + SUM(v.covishield)
+                + SUM(v.sputnik_v),
+                0
+            )
+        )::NUMERIC,
+        2
+    ) AS sputnik_v_percentage
+FROM country c
+JOIN state s
+    ON c.country_id = s.country_id
+JOIN vaccination v
+    ON s.state_id = v.state_id
+GROUP BY c.name
+ORDER BY c.name;
+
+
+/*
+34. To find out percentage of people who took both the doses
+*/
+
+SELECT
+    c.name AS country,
+    c.population,
+    SUM(v.second_dose) AS people_fully_vaccinated,
+    ROUND(
+        (
+            SUM(v.second_dose) * 100.0
+            / NULLIF(c.population, 0)
+        )::NUMERIC,
+        2
+    ) AS fully_vaccinated_percentage
+FROM country c
+JOIN state s
+    ON c.country_id = s.country_id
+JOIN vaccination v
+    ON s.state_id = v.state_id
+GROUP BY
+    c.name,
+    c.population
+ORDER BY fully_vaccinated_percentage DESC;
+
+
+/*
+============================================================
+STATE-WISE COVID QUERIES
+============================================================
+*/
+
+
+/*
+35. Total State-wise Confirmed Cases
+*/
+
+SELECT
+    s.name AS state,
+    SUM(cs.confirmed) AS total_confirmed_cases
+FROM covid_case_stats cs
+JOIN state s
+    ON cs.state_id = s.state_id
+GROUP BY s.name
+ORDER BY total_confirmed_cases DESC;
+
+
+/*
+36. Maximum Active cases State-wise till date
+*/
+
+SELECT
+    s.name AS state,
+    MAX(cs.active_cases) AS maximum_active_cases
+FROM covid_case_stats cs
+JOIN state s
+    ON cs.state_id = s.state_id
+GROUP BY s.name
+ORDER BY maximum_active_cases DESC;
+
+
+/*
+37. Max Per Day Confirmed cases in States
+*/
+
+SELECT
+    s.name AS state,
+    MAX(cs.new_confirmed) AS maximum_daily_confirmed_cases
+FROM covid_case_stats cs
+JOIN state s
+    ON cs.state_id = s.state_id
+GROUP BY s.name
+ORDER BY maximum_daily_confirmed_cases DESC;
+
+
+/*
+38. Max Per Day Death cases in States
+*/
+
+SELECT
+    s.name AS state,
+    MAX(cs.new_deaths) AS maximum_daily_deaths
+FROM covid_case_stats cs
+JOIN state s
+    ON cs.state_id = s.state_id
+GROUP BY s.name
+ORDER BY maximum_daily_deaths DESC;
+
+
+/*
+39. State-wise Mortality Rate
+*/
+
+SELECT
+    s.name AS state,
+    SUM(cs.confirmed) AS confirmed_cases,
+    SUM(cs.deaths) AS deaths,
+    ROUND(
+        (
+            SUM(cs.deaths) * 100.0
+            / NULLIF(SUM(cs.confirmed), 0)
+        )::NUMERIC,
+        2
+    ) AS mortality_rate
+FROM covid_case_stats cs
+JOIN state s
+    ON cs.state_id = s.state_id
+GROUP BY s.name
+ORDER BY mortality_rate DESC;
+
+
+/*
+============================================================
+40. COVID WAVES IN 'MUMBAI'
+============================================================
+*/
+
+
+/*
+FIRST IMPORT THE MUMBAI CSV INTO:
+
+    mumbai_covid_waves
+
+The CSV must contain these 12 columns in this order:
+
+case_id
+country_id
+state_id
+district_id
+report_date
+report_time
+confirmed
+deaths
+recovered
+new_confirmed
+new_deaths
+active_cases
+
+Use pgAdmin -> right click mumbai_covid_waves
+-> Import/Export Data -> Import.
+
+Do not run a server-side COPY command unless you know the
+actual server-accessible CSV path.
+*/
+
+
+/*
+40. Daily Mumbai COVID data
+*/
+
+SELECT
+    report_date,
+    SUM(new_confirmed) AS new_cases,
+    SUM(new_deaths) AS new_deaths,
+    SUM(active_cases) AS active_cases
+FROM mumbai_covid_waves
+GROUP BY report_date
+ORDER BY report_date;
+
+
+/*
+40. Mumbai 7-day moving average
+*/
+
+WITH daily_cases AS (
+    SELECT
+        report_date,
+        SUM(new_confirmed) AS new_cases
+    FROM mumbai_covid_waves
+    GROUP BY report_date
+),
+moving_average AS (
+    SELECT
+        report_date,
+        new_cases,
+        ROUND(
+            AVG(new_cases) OVER (
+                ORDER BY report_date
+                ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+            ),
+            2
+        ) AS seven_day_average
+    FROM daily_cases
+)
+SELECT
+    report_date,
+    new_cases,
+    seven_day_average
+FROM moving_average
+ORDER BY report_date;
+
+
+
+/*
+============================================================
+END OF COVID DATABASE PROJECT SQL FILE
+============================================================
+*/
